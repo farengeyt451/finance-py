@@ -81,34 +81,40 @@ def login():
     # Forget any user_id
     session.clear()
 
-    # Create db connection
-    conn = get_db_connection()
-
     # User reached route via POST (as by submitting a form via POST)
     if request.method == "POST":
+        try:
+            conn = get_db_connection()
+            username_login = request.form.get("username_login")
+            password_login = request.form.get("password_login")
 
-        # Ensure username was submitted
-        if not request.form.get("username"):
-            return apology("must provide username", 403)
+            # Ensure username was submitted
+            if not username_login:
+                return apology("must provide username", 403)
 
-        # Ensure password was submitted
-        elif not request.form.get("password"):
-            return apology("must provide password", 403)
+            # Ensure password was submitted
+            elif not password_login:
+                return apology("must provide password", 403)
 
-        # Query database for username
-        rows = conn.execute("SELECT * FROM users WHERE username = ?;",
-                            (request.form.get("username"), )).fetchall()
+            # Query database for username
+            rows = conn.execute("SELECT * FROM users WHERE username = ?;",
+                                (username_login, )).fetchall()
 
-        print(rows)
-        # Ensure username exists and password is correct
-        if not rows or not check_password_hash(rows[0]["hash"], request.form.get("password")):
-            return apology("invalid username and/or password", 403)
+            # Ensure username exists and password is correct
+            if not rows or not rows[0]["username"] or not check_password_hash(rows[0]["hash"], password_login):
+                return apology("invalid username and/or password", 403)
 
-        # Remember which user has logged in
-        session["user_id"] = rows[0]["id"]
+            # Remember which user has logged in
+            session["user_id"] = rows[0]["id"]
 
-        # Redirect user to home page
-        return redirect("/")
+            # Redirect user to home page
+            return redirect("/")
+
+        except:
+            return apology("something went wrong", 500)
+
+        finally:
+            conn.close()
 
     # User reached route via GET (as by clicking a link or via redirect)
     else:
@@ -137,10 +143,9 @@ def quote():
 def register():
     """Register user"""
 
-    conn = get_db_connection()
-
     if request.method == "POST":
         try:
+            conn = get_db_connection()
             username_form = request.form.get("username")
             username_password = request.form.get("password")
             username_password_confirmation = request.form.get("confirmation")
@@ -169,7 +174,6 @@ def register():
                 conn.execute(
                     "INSERT INTO users (username, hash) VALUES(?, ?);", (username_form, password_hash))
                 conn.commit()
-
                 return redirect("/")
 
         except:
