@@ -1,9 +1,9 @@
 import os
-import requests
 import urllib.parse
-
-from flask import redirect, render_template, request, session
 from functools import wraps
+
+import requests
+from flask import redirect, render_template, request, session
 
 
 def apology(message, code=400):
@@ -40,7 +40,7 @@ def lookup(symbol):
 
     # Contact API
     try:
-        api_key = os.environ.get("API_KEY")
+        api_key = os.environ.get("IEXCLOUD_API_KEY")
         url = f"https://cloud.iexapis.com/stable/stock/{urllib.parse.quote_plus(symbol)}/quote?token={api_key}"
         response = requests.get(url)
         response.raise_for_status()

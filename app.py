@@ -3,9 +3,9 @@ import sqlite3
 from tempfile import mkdtemp
 
 from flask import Flask, flash, redirect, render_template, request, session
-from flask_session import Session
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from flask_session import Session
 from helpers import apology, login_required, lookup, usd
 
 # Configure application
@@ -81,6 +81,9 @@ def login():
     # Forget any user_id
     session.clear()
 
+    # Create db connection
+    conn = get_db_connection()
+
     # User reached route via POST (as by submitting a form via POST)
     if request.method == "POST":
 
@@ -93,11 +96,12 @@ def login():
             return apology("must provide password", 403)
 
         # Query database for username
-        rows = db.execute("SELECT * FROM users WHERE username = ?",
-                          request.form.get("username"))
+        rows = conn.execute("SELECT * FROM users WHERE username = ?;",
+                            (request.form.get("username"), )).fetchall()
 
+        print(rows)
         # Ensure username exists and password is correct
-        if len(rows) != 1 or not check_password_hash(rows[0]["hash"], request.form.get("password")):
+        if not rows or not check_password_hash(rows[0]["hash"], request.form.get("password")):
             return apology("invalid username and/or password", 403)
 
         # Remember which user has logged in
@@ -132,7 +136,50 @@ def quote():
 @app.route("/register", methods=["GET", "POST"])
 def register():
     """Register user"""
-    return apology("TODO")
+
+    conn = get_db_connection()
+
+    if request.method == "POST":
+        try:
+            username_form = request.form.get("username")
+            username_password = request.form.get("password")
+            username_password_confirmation = request.form.get("confirmation")
+
+            username_db = conn.execute("SELECT username FROM users WHERE username = ?;",
+                                       (request.form.get("username"), )).fetchone()
+
+            if not username_form:
+                return apology("must provide username", 403)
+
+            elif not username_password:
+                return apology("must provide password", 403)
+
+            elif username_password != username_password_confirmation:
+                return apology("password and password confirmation doesn't match", 403)
+
+            elif username_db:
+                return apology("username already exist", 403)
+
+            else:
+                password_form = request.form.get("password")
+
+                password_hash = generate_password_hash(
+                    password_form, method='pbkdf2:sha256', salt_length=8)
+
+                conn.execute(
+                    "INSERT INTO users (username, hash) VALUES(?, ?);", (username_form, password_hash))
+                conn.commit()
+
+                return redirect("/")
+
+        except:
+            return apology("something went wrong", 500)
+
+        finally:
+            conn.close()
+
+    else:
+        return render_template("register.html")
 
 
 @app.route("/sell", methods=["GET", "POST"])
