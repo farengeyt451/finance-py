@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from datetime import datetime
 from tempfile import mkdtemp
 
 from flask import Flask, flash, redirect, render_template, request, session
@@ -64,7 +65,65 @@ def index():
 @login_required
 def buy():
     """Buy shares of stock"""
-    return apology("TODO")
+
+    if request.method == "POST":
+        try:
+            conn = get_db_connection()
+
+            user_id = session["user_id"]
+            stock_symbol = request.form.get("stock_symbol")
+            shares_amount = request.form.get("stock_shares")
+            stock_props = lookup(stock_symbol)
+            stock_price = stock_props["price"]
+            stock_symbol = stock_props["symbol"]
+            dt_string = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+            if not stock_symbol:
+                return apology("required stock symbol")
+
+            if not stock_props:
+                return apology("stock symbol does not exit")
+
+            try:
+                stock_shares_val = int(shares_amount)
+
+                if stock_shares_val < 0:
+                    return apology("shares value must be positive")
+
+            except:
+                return apology("shares value must be integer")
+
+            user_cash = conn.execute(
+                "SELECT * FROM users WHERE id = ?;", (user_id, )).fetchone()["cash"]
+
+            transaction_value = int(shares_amount) * stock_price
+
+            if transaction_value <= user_cash:
+
+                user_cash_left = user_cash - transaction_value
+
+                conn.execute(
+                    "INSERT INTO trans_buy (user_id, symbol, shares_amount, price, transacted) VALUES (?, ?, ?, ?, ?);", (user_id, stock_symbol, shares_amount, stock_price, dt_string))
+
+                conn.execute("UPDATE users SET cash = ? WHERE id = ?;",
+                             (user_cash_left, user_id))
+
+                conn.commit()
+
+                flash("Bought")
+
+                return redirect("/")
+
+            else:
+                return apology("not enough cash for transaction")
+
+        except:
+            return apology("something went wrong")
+
+        finally:
+            conn.close()
+
+    return render_template("buy.html")
 
 
 @app.route("/history")
