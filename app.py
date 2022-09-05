@@ -23,6 +23,8 @@ app.config["SESSION_PERMANENT"] = False
 app.config["SESSION_TYPE"] = "filesystem"
 Session(app)
 
+STARTING_TOTAL = usd(10000)
+
 
 def dict_factory(cursor, row):
     """Return dictionary instead of default tuple"""
@@ -38,6 +40,15 @@ def get_db_connection():
     connection.row_factory = dict_factory
 
     return connection
+
+
+def check_stock(symbol_form, transactions_symbols):
+    """Check submited stock in stocks list"""
+    for sym in transactions_symbols:
+        if symbol_form == sym["symbol"]:
+            return True
+
+    return False
 
 
 # Make sure API key is set
@@ -58,13 +69,45 @@ def after_request(response):
 @login_required
 def index():
     """Show portfolio of stocks"""
-    return apology("TODO")
+
+    user_id = session["user_id"]
+    user_index_table = []
+
+    try:
+        conn = get_db_connection()
+
+        bought_stocks = conn.execute(
+            "SELECT symbol, SUM(shares_amount) total_shares FROM stock_transactions WHERE user_id=? GROUP BY symbol;",   (user_id, )).fetchall()
+
+        user_cash = conn.execute(
+            "SELECT cash FROM users WHERE id = ?;",   (user_id, )).fetchone()
+
+        for stock in bought_stocks:
+            res = lookup(stock["symbol"])
+            total = res["price"] * stock["total_shares"]
+            price_usd = usd(res["price"])
+
+            stock.update({"total": usd(total)})
+            res.update(stock)
+            res.update({"price": price_usd})
+
+            user_index_table.append(res)
+
+        return render_template("index.html", user_index_table=user_index_table, user_cash=usd(user_cash["cash"]), starting_total=STARTING_TOTAL)
+
+    except:
+        apology("something went wrong")
+
+    finally:
+        conn.close()
 
 
-@app.route("/buy", methods=["GET", "POST"])
-@login_required
+@ app.route("/buy", methods=["GET", "POST"])
+@ login_required
 def buy():
     """Buy shares of stock"""
+
+    OPERATION_TYPE = "BUY"
 
     if request.method == "POST":
         try:
@@ -103,7 +146,7 @@ def buy():
                 user_cash_left = user_cash - transaction_value
 
                 conn.execute(
-                    "INSERT INTO trans_buy (user_id, symbol, shares_amount, price, transacted) VALUES (?, ?, ?, ?, ?);", (user_id, stock_symbol, shares_amount, stock_price, dt_string))
+                    "INSERT INTO stock_transactions (user_id, symbol, operation_type, shares_amount, price, transacted) VALUES (?, ?, ?, ?, ?, ?);", (user_id, stock_symbol, OPERATION_TYPE, shares_amount, stock_price, dt_string))
 
                 conn.execute("UPDATE users SET cash = ? WHERE id = ?;",
                              (user_cash_left, user_id))
@@ -126,14 +169,14 @@ def buy():
     return render_template("buy.html")
 
 
-@app.route("/history")
-@login_required
+@ app.route("/history")
+@ login_required
 def history():
     """Show history of transactions"""
     return apology("TODO")
 
 
-@app.route("/login", methods=["GET", "POST"])
+@ app.route("/login", methods=["GET", "POST"])
 def login():
     """Log user in"""
 
@@ -165,6 +208,8 @@ def login():
 
             # Remember which user has logged in
             session["user_id"] = rows[0]["id"]
+            global user_id
+            user_id = session["user_id"]
 
             # Redirect user to home page
             return redirect("/")
@@ -180,7 +225,7 @@ def login():
         return render_template("login.html")
 
 
-@app.route("/logout")
+@ app.route("/logout")
 def logout():
     """Log user out"""
 
@@ -191,8 +236,8 @@ def logout():
     return redirect("/")
 
 
-@app.route("/quote", methods=["GET", "POST"])
-@login_required
+@ app.route("/quote", methods=["GET", "POST"])
+@ login_required
 def quote():
     """Get stock quote."""
 
@@ -213,7 +258,7 @@ def quote():
         return render_template("quote.html")
 
 
-@app.route("/register", methods=["GET", "POST"])
+@ app.route("/register", methods=["GET", "POST"])
 def register():
     """Register user"""
 
@@ -260,8 +305,49 @@ def register():
         return render_template("register.html")
 
 
-@app.route("/sell", methods=["GET", "POST"])
-@login_required
+@ app.route("/sell", methods=["GET", "POST"])
+@ login_required
 def sell():
     """Sell shares of stock"""
-    return apology("TODO")
+    user_id = session["user_id"]
+
+    # try:
+    conn = get_db_connection()
+    transactions_symbols = conn.execute(
+        "SELECT symbol FROM stock_transactions WHERE user_id = ?;", (user_id, )).fetchall()
+
+    if request.method == "POST":
+        symbol_form = request.form.get("symbol")
+        shares_form = request.form.get("shares")
+
+        if not symbol_form:
+            return apology("pls select stock ")
+
+        if not shares_form:
+            return apology("required shares")
+
+        if not check_stock(symbol_form, transactions_symbols):
+            return apology("you don't own any shares of that stock")
+
+        try:
+            shares_form_int = int(shares_form)
+
+            if shares_form_int < 0:
+                return apology("shares value must be positive")
+
+        except:
+            return apology("shares value must be integer")
+
+        return redirect("/")
+
+    else:
+        transactions_symbols = conn.execute(
+            "SELECT symbol FROM stock_transactions WHERE user_id = ?;", (user_id, ))
+
+        return render_template("sell.html", transactions_symbols=transactions_symbols)
+
+    # except:
+    #     return apology("something went wrong")
+
+    # finally:
+    #     conn.close()
