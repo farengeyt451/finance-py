@@ -42,13 +42,17 @@ def get_db_connection():
     return connection
 
 
-def check_stock(symbol_form, transactions_symbols):
-    """Check submited stock in stocks list"""
+def check_stock(symbol_form, shares_amount_form_int, transactions_symbols):
+    """Check submitted stock in stocks list"""
+
     for sym in transactions_symbols:
         if symbol_form == sym["symbol"]:
-            return True
+            if shares_amount_form_int <= sym["shares_amount"]:
+                return ''
+            else:
+                return "not enough shares amount"
 
-    return False
+    return 'stock not found'
 
 
 # Make sure API key is set
@@ -77,10 +81,10 @@ def index():
         conn = get_db_connection()
 
         bought_stocks = conn.execute(
-            "SELECT symbol, SUM(shares_amount) total_shares FROM stock_transactions WHERE user_id=? GROUP BY symbol;",   (user_id, )).fetchall()
+            "SELECT symbol, SUM(shares_amount) total_shares FROM stock_transactions WHERE user_id=? GROUP BY symbol HAVING SUM(shares_amount) > 0;", (user_id, )).fetchall()
 
         user_cash = conn.execute(
-            "SELECT cash FROM users WHERE id = ?;",   (user_id, )).fetchone()
+            "SELECT cash FROM users WHERE id = ?;", (user_id, )).fetchone()
 
         for stock in bought_stocks:
             res = lookup(stock["symbol"])
@@ -116,16 +120,13 @@ def buy():
             user_id = session["user_id"]
             stock_symbol = request.form.get("stock_symbol")
             shares_amount = request.form.get("stock_shares")
-            stock_props = lookup(stock_symbol)
-            stock_price = stock_props["price"]
-            stock_symbol = stock_props["symbol"]
             dt_string = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
             if not stock_symbol:
                 return apology("required stock symbol")
 
-            if not stock_props:
-                return apology("stock symbol does not exit")
+            if not shares_amount:
+                return apology("required shares")
 
             try:
                 stock_shares_val = int(shares_amount)
@@ -136,8 +137,15 @@ def buy():
             except:
                 return apology("shares value must be integer")
 
+            stock_props = lookup(stock_symbol)
+            stock_price = stock_props["price"]
+            stock_symbol = stock_props["symbol"]
+
+            if not stock_props:
+                return apology("stock symbol does not exit")
+
             user_cash = conn.execute(
-                "SELECT * FROM users WHERE id = ?;", (user_id, )).fetchone()["cash"]
+                "SELECT cash FROM users WHERE id = ?;", (user_id, )).fetchone()["cash"]
 
             transaction_value = int(shares_amount) * stock_price
 
@@ -173,7 +181,29 @@ def buy():
 @ login_required
 def history():
     """Show history of transactions"""
-    return apology("TODO")
+
+    user_id = session["user_id"]
+
+    try:
+        conn = get_db_connection()
+        transactions = conn.execute(
+            "SELECT * FROM stock_transactions WHERE user_id = ?;", (user_id, )).fetchall()
+
+        def patchPrice(transaction):
+            upd_dict = {"price": usd(
+                transaction["price"]), "transacted_sum": usd(transaction["price"] * abs(transaction["shares_amount"]))}
+            transaction.update(upd_dict)
+            return transaction
+
+        transactions_mapped = list(map(patchPrice, transactions))
+
+        return render_template("history.html", transactions=transactions_mapped)
+
+    except:
+        return apology("something went wrong")
+
+    finally:
+        conn.close()
 
 
 @ app.route("/login", methods=["GET", "POST"])
@@ -208,8 +238,7 @@ def login():
 
             # Remember which user has logged in
             session["user_id"] = rows[0]["id"]
-            global user_id
-            user_id = session["user_id"]
+            session["username"] = username_login
 
             # Redirect user to home page
             return redirect("/")
@@ -309,45 +338,67 @@ def register():
 @ login_required
 def sell():
     """Sell shares of stock"""
+
+    OPERATION_TYPE = "SELL"
     user_id = session["user_id"]
 
-    # try:
-    conn = get_db_connection()
-    transactions_symbols = conn.execute(
-        "SELECT symbol FROM stock_transactions WHERE user_id = ?;", (user_id, )).fetchall()
+    try:
+        conn = get_db_connection()
+        transactions = conn.execute(
+            "SELECT symbol, SUM(shares_amount) shares_amount FROM stock_transactions WHERE user_id =? GROUP BY symbol;", (user_id, )).fetchall()
 
-    if request.method == "POST":
-        symbol_form = request.form.get("symbol")
-        shares_form = request.form.get("shares")
+        if request.method == "POST":
+            symbol_form = request.form.get("symbol")
+            shares_amount_form = request.form.get("shares")
+            dt_string = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-        if not symbol_form:
-            return apology("pls select stock ")
+            if not symbol_form:
+                return apology("pls select stock symbol")
 
-        if not shares_form:
-            return apology("required shares")
+            if not shares_amount_form:
+                return apology("required shares")
 
-        if not check_stock(symbol_form, transactions_symbols):
-            return apology("you don't own any shares of that stock")
+            shares_amount_form_int = int(shares_amount_form)
 
-        try:
-            shares_form_int = int(shares_form)
+            check_stock_res = check_stock(
+                symbol_form, shares_amount_form_int, transactions)
 
-            if shares_form_int < 0:
-                return apology("shares value must be positive")
+            if check_stock_res:
+                return apology(check_stock_res)
 
-        except:
-            return apology("shares value must be integer")
+            try:
+                if shares_amount_form_int < 0:
+                    return apology("shares value must be positive")
 
-        return redirect("/")
+            except:
+                return apology("shares value must be integer")
 
-    else:
-        transactions_symbols = conn.execute(
-            "SELECT symbol FROM stock_transactions WHERE user_id = ?;", (user_id, ))
+            user_cash = conn.execute(
+                "SELECT cash FROM users WHERE id = ?;", (user_id, )).fetchone()["cash"]
 
-        return render_template("sell.html", transactions_symbols=transactions_symbols)
+            stock_props = lookup(symbol_form)
+            stock_price = stock_props["price"]
+            stock_symbol = stock_props["symbol"]
+            transaction_value = shares_amount_form_int * stock_price
+            user_cash_left = user_cash + transaction_value
 
-    # except:
-    #     return apology("something went wrong")
+            conn.execute(
+                "INSERT INTO stock_transactions (user_id, symbol, operation_type, shares_amount, price, transacted) VALUES (?, ?, ?, ?, ?, ?);", (user_id, stock_symbol, OPERATION_TYPE, -shares_amount_form_int, stock_price, dt_string))
 
-    # finally:
-    #     conn.close()
+            conn.execute("UPDATE users SET cash = ? WHERE id = ?;",
+                         (user_cash_left, user_id))
+
+            conn.commit()
+
+            flash("Sold")
+
+            return redirect("/")
+
+        else:
+            return render_template("sell.html", transactions_symbols=transactions)
+
+    except:
+        return apology("something went wrong")
+
+    finally:
+        conn.close()
