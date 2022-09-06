@@ -9,6 +9,7 @@ instance/*
 __pycache__/
 *.py[cod]
 *$py.class
+/*_session/
 
 # C extensions
 *.so
